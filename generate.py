@@ -38,6 +38,11 @@ EXPECTED = {
     "power": (24, "5", False, True),      # duplicate of power_off
     "23_off": (24, "1", False, False),
     "1": (24, "1", True, False),
+    # display toggle learns (24C fan5 swing off): only the set->off press
+    # encodes anything (b5 bit7); the others are the plain 24_5 frame.
+    "display_2": (24, "5", True, False),
+    "display_1_again": (24, "5", True, False),
+    "display_3": (24, "5", True, False),
 }
 for t in (22, 23, 24):
     for fan in FANS:
@@ -57,7 +62,9 @@ def validate(captures: dict) -> tuple[int, int]:
         st = decode_state(frame)
         if not st["checksum_ok"]:
             print(f"  FAIL {name:10s} checksum invalid"); bad += 1; continue
-        if not st["swing_v"] or st["swing_h"]:
+        # all original 2023-era captures were learned with vertical swing ON;
+        # display learns (2025) were made with swing OFF
+        if not name.startswith("display") and (not st["swing_v"] or st["swing_h"]):
             print(f"  FAIL {name:10s} expected swing_v on (learned state), got v={st['swing_v']} h={st['swing_h']}")
             bad += 1; continue
         if exp is None:
@@ -113,7 +120,7 @@ def cross_check(captures: dict) -> int:
             continue
         st = decode_state(cap)
         regen = build_frame(st["temp"], st["fan"], st["power"], st["turbo"],
-                            st["swing_v"], st["swing_h"])
+                            st["swing_v"], st["swing_h"], st["display_off"])
         if regen == cap:
             matched += 1
         else:
@@ -136,7 +143,7 @@ if __name__ == "__main__":
           f" ({len(TEMPS)} temps x {len(FANS)} fans x {len(SWINGS)} swing states + on/off)")
 
     matched = cross_check(captures)
-    print(f"== {matched}/21 valid captures regenerate byte-identically from their decoded state")
+    print(f"== {matched}/24 valid captures regenerate byte-identically from their decoded state")
 
     # spot-check generated codes decode back to their intended state
     for name in ("on", "off", "25_2", "25_2_v", "25_2_h", "25_2_vh", "30_turbo_vh"):
@@ -147,5 +154,5 @@ if __name__ == "__main__":
     json.dump({DEVICE: codes}, open("codes.json", "w"), indent=1)
     print(f"== wrote codes.json ({DEVICE}: on, off, 18_auto..30_turbo[_v|_h|_vh])")
 
-    assert bad == 0 and good >= 20 and matched == 21 and n_ev == 4
+    assert bad == 0 and good >= 23 and matched == 24 and n_ev == 4
     print("ALL CHECKS PASSED")

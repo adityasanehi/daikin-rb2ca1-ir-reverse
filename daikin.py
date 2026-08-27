@@ -9,8 +9,12 @@ Frame: 9 bytes, each sent LSB-first (bit 0 first), 38 kHz carrier.
   b4 = swing_v | swing_h<<4        (vertical flap / horizontal flap)
         NOTE: all original Cool-mode captures were learned with swing_v ON
         (b4=0x01) — confirmed on the real AC.
-  b5 = 0x44, b6 = 0x00, b7 = 0x00  constants (mode-related; Cool)
-  b8 = (sum(b0..b7) mod 256) ^ 0xAA      (Cool shortcut: (b2+b3+b4-1)^0xAA, since AA 11 44 00 00 sum to 0xFF; collapses to (b2+b3)^0xAA when swing_v on)
+  b5 = mode | display_off<<7    (0x44 = Cool, display on; 0xC4 = Cool, display off)
+        The display's ambient/set-temp cycling is NOT encoded: those presses
+        send the identical 0x44 frame — the unit tracks the content itself.
+  b6 = 0x00, b7 = 0x00             constants
+  b8 = (sum(b0..b7) mod 256) ^ 0xAA      (with b5=0x44: (b2+b3+b4-1)^0xAA; collapses
+        to (b2+b3)^0xAA when swing_v is on, as in all original learns)
 
 Timing (us): header 7000/3500; bit mark 450; space 450 (0) / 1300 (1);
 footer mark 450; trailing gap ~109 ms. Learned codes may carry extra trailing
@@ -32,11 +36,13 @@ def checksum(frame8: bytes) -> int:
 
 
 def build_frame(temp: int, fan: str, power: bool = True, turbo: bool = False,
-                swing_v: bool = False, swing_h: bool = False) -> bytes:
+                swing_v: bool = False, swing_h: bool = False,
+                display_off: bool = False) -> bytes:
     assert temp in TEMPS and fan in FANS
     b2 = (0x80 if turbo else 0) | (FANS[fan] << 4) | (0x08 if power else 0) | 0x01
     b4 = (0x01 if swing_v else 0) | (0x10 if swing_h else 0)
-    body = bytes([0xAA, 0x11, b2, temp - 16, b4, 0x44, 0x00, 0x00])
+    b5 = 0x44 | (0x80 if display_off else 0)   # Cool mode | display-off bit
+    body = bytes([0xAA, 0x11, b2, temp - 16, b4, b5, 0x00, 0x00])
     return body + bytes([checksum(body)])
 
 
@@ -75,6 +81,7 @@ def decode_state(frame: bytes) -> dict:
         "turbo": bool(b2 & 0x80),
         "swing_v": bool(frame[4] & 0x01),
         "swing_h": bool(frame[4] & 0x10),
+        "display_off": bool(frame[5] & 0x80),
         "checksum_ok": frame[8] == checksum(frame[:8]),
     }
 
@@ -86,6 +93,9 @@ if __name__ == "__main__":  # self-check: round-trip + checksum
                 f = build_frame(temp, fan, swing_v=sv, swing_h=sh)
                 assert f == from_broadlink(to_broadlink(f)), (temp, fan, sv, sh)
                 assert decode_state(f)["checksum_ok"]
+    # display evidence: set->off press decoded to b5=0xC4, checksum valid
+    assert build_frame(24, "5", display_off=True) == bytes.fromhex("aa11590800c400004a")
+    assert decode_state(bytes.fromhex("aa11590800c400004a"))["display_off"]
     off = build_frame(24, "5", power=False, turbo=True, swing_v=True)
     assert off == from_broadlink(to_broadlink(off)) and decode_state(off)["checksum_ok"]
     print("daikin.py self-check OK (13 states x 4 swing, round-trip + checksum)")

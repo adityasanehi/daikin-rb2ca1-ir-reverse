@@ -2,18 +2,19 @@
 
 The Daikin **RB2CA1** remote (India, e.g. paired to FTKZ50UV16U4) speaks an
 **undocumented 72-bit protocol** that exists in *no* IR library. This repo
-cracks it from 22 Broadlink captures (+ 12 swing learns) and **generates every
+cracks it from 22 Broadlink captures (+ 12 swing + 4 display learns) and **generates every
 command programmatically** — no manual learning of the ~364
 temp × fan × swing combinations.
 
 ```
-Captures (22 + 12 swing) → protocol cracked → 366 commands generated → tested on real AC ✓
+Captures (22 + 16 swing/display) → protocol cracked → 366 commands generated → tested on real AC ✓
 ```
 
-- ✅ checksum formula recovered — validates **all 21 decodable captures** (of 22; one truncated learn) and the decoded swing frames
+- ✅ checksum formula recovered — validates **all 24 decodable captures** (2 truncated/noise learns excluded) and the decoded swing frames
 - ✅ every decodable capture regenerates **byte-identically** from its decoded state
 - ✅ user-verified against the AC: 4 captures (`power_on`, `power_off`, `24_auto`, `24_5`) + the generated 25 °C set — sent via Broadlink RM4, **AC obeys**
 - ✅ swing reverse-engineered: vertical = b4 bit0, horizontal = b4 bit4 — confirmed on the AC (old codes with `b4=0x01` made the flap oscillate)
+- ✅ display toggle reverse-engineered: **b5 bit7 = display off**; the ambient/set-temp cycling isn't encoded (unit-side)
 - 📦 ready-made outputs: [`codes.json`](codes.json) (Broadlink/HA, 366 commands) and
   [`smartir.json`](smartir.json) ([SmartIR](https://github.com/smartHomeHub/SmartIR) climate profile with swing modes)
 
@@ -83,6 +84,7 @@ Two controlled sweeps against a base capture, changing **one thing at a time**:
 - **temperature sweep** (22/23/24 °C, same fan) → only byte 3 moved → temp field
 - **fan sweep** (auto/1–5/turbo, same temp) → only byte 2 moved → fan/power/turbo
 - **swing learns** (v/h on/off at 24 °C fan 5) → only byte 4 moved → swing field
+- **display learns** (off/ambient/set cycle at 24 °C fan 5) → only byte 5 moved → display bit
 
 Resulting layout:
 
@@ -92,7 +94,8 @@ Resulting layout:
 | 2 | **fan + power + powerful** | `turbo<<7 \| fan<<4 \| power<<3 \| 1` (fan: auto=0, 1–5) |
 | 3 | **temperature** | `temp − 16` (18–30 °C → 2–14) |
 | 4 | **swing** | `vertical (bit0) \| horizontal (bit4)` |
-| 5–7 | mode/flags | `44 00 00` constant in all captures (Cool mode) |
+| 5 | **mode + display** | `0x44` Cool \| `display_off<<7` (0xC4 = Cool + display off) |
+| 6–7 | flags | `00 00` constant in all captures |
 | 8 | **checksum** | see below |
 
 The swing learns also exposed a trap: **all 22 original captures carried
@@ -127,7 +130,7 @@ bytes `AA 11 01 44` sum to exactly `0x100 ≡ 0 (mod 256)`, so the general rule 
 ck = ( sum(bytes[0:8]) mod 256 ) ^ 0xAA
 ```
 
-which explains every observed carry quirk. **Valid on all 21 decodable captures (the corrupt 23_auto is excluded throughout) and on the decoded swing frames.**
+which explains every observed carry quirk. **Valid on all 24 decodable captures (excluded: the truncated 23_auto, the noise-learn display_1) and on the decoded swing frames.**
 
 (Refinement after the swing discovery: `b4` is a field, not a constant — the
 fixed bytes `AA 11 44 00 00` sum to `0xFF`, so in Cool mode the shortcut is
@@ -150,6 +153,12 @@ vertical swing is on — as it was in every original learn.)
 
 ## Curious findings
 
+- **Display toggle: only the OFF state is encoded.** The remote's display
+  button cycles off → ambient → set-temp → off, but the ambient and set-temp
+  presses send the **identical plain frame** (`b5=0x44`); only the set→off
+  press sets `b5 bit7` (`0xC4`). The unit tracks the display content itself.
+  (One learn captured a 128-timing frame with a foreign header — noise,
+  ignored; the same press re-learned as a clean standard frame.)
 - All original captures were learned with **vertical swing latched on**
   (`b4=0x01`) — confirmed on the real AC.
 - Pressing a swing button **clears the powerful (turbo) bit** on this remote —
@@ -232,10 +241,13 @@ were never captured; test once on your unit.
 
 ## Extending
 
-- **Other modes** (dry/fan/heat): likely in `b5` (`0x44` = Cool in all
-  captures). Learn one sample per mode at a known temp/fan, diff against a
-  cool frame, re-derive with the general `sum ^ 0xAA` rule. Same method,
-  five minutes each.
+- **Other modes** (dry/fan/heat): likely in `b5`'s low bits (`0x44` = Cool in
+  all captures; bit 7 is the display-off flag). Learn one sample per mode at
+  a known temp/fan, diff against a cool frame, re-derive with the general
+  `sum ^ 0xAA` rule. Same method, five minutes each.
+- **Display-off variants**: `build_frame(..., display_off=True)` generates
+  them; not in `codes.json`/`smartir.json` since neither surface has a
+  display concept (kept for the record).
 
 ## References
 
