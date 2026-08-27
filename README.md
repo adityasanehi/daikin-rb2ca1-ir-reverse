@@ -2,14 +2,14 @@
 
 The Daikin **RB2CA1** remote (India, e.g. paired to FTKZ50UV16U4) speaks an
 **undocumented 72-bit protocol** that exists in *no* IR library. This repo
-cracks it from ~20 Broadlink captures and **generates every command
+cracks it from 22 Broadlink captures and **generates every command
 programmatically** — no manual learning of the ~91 temp × fan combinations.
 
 ```
-Captures (20) → protocol cracked → 93 commands generated → tested on real AC ✓
+Captures (22) → protocol cracked → 93 commands generated → tested on real AC ✓
 ```
 
-- ✅ checksum formula recovered, validates **21/21** captures
+- ✅ checksum formula recovered, validates **21/21 valid captures** (of 22; one truncated learn)
 - ✅ every capture regenerates **byte-identically** from its decoded state
 - ✅ generated codes sent via Broadlink RM4 — **AC obeys**
 - 📦 ready-made outputs: [`codes.json`](codes.json) (Broadlink/HA) and
@@ -118,12 +118,12 @@ bytes `AA 11 01 44` sum to exactly `0x100 ≡ 0 (mod 256)`, so the general rule 
 ck = ( sum(bytes[0:8]) mod 256 ) ^ 0xAA
 ```
 
-which explains every observed carry quirk. **Valid on all 21 valid captures.**
+which explains every observed carry quirk. **Valid on all 21 valid captures (the corrupt 23_auto is excluded throughout).**
 
 ### Step 6 — Validate end to end
 
-1. All 21 captures decode with a valid checksum and the expected state.
-2. All 21 regenerate **byte-identically** from their decoded state.
+1. All 21 valid captures decode with a valid checksum and the expected state.
+2. All 21 valid captures regenerate **byte-identically** from their decoded state.
 3. Generated 25 °C codes sent through the actual Broadlink → **AC obeys**.
 
 ## Curious findings
