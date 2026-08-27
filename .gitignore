@@ -1,0 +1,7 @@
+# local duplicate of smartir.json (named for SmartIR's device_code scheme)
+9001.json
+
+# python
+__pycache__/
+*.pyc
+.DS_Store
