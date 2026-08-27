@@ -2,18 +2,20 @@
 
 The Daikin **RB2CA1** remote (India, e.g. paired to FTKZ50UV16U4) speaks an
 **undocumented 72-bit protocol** that exists in *no* IR library. This repo
-cracks it from 22 Broadlink captures and **generates every command
-programmatically** — no manual learning of the ~91 temp × fan combinations.
+cracks it from 22 Broadlink captures (+ 12 swing learns) and **generates every
+command programmatically** — no manual learning of the ~364
+temp × fan × swing combinations.
 
 ```
-Captures (22) → protocol cracked → 93 commands generated → tested on real AC ✓
+Captures (22 + 12 swing) → protocol cracked → 366 commands generated → tested on real AC ✓
 ```
 
-- ✅ checksum formula recovered — validates **all 21 decodable captures** (of 22; one truncated learn)
+- ✅ checksum formula recovered — validates **all 21 decodable captures** (of 22; one truncated learn) and the decoded swing frames
 - ✅ every decodable capture regenerates **byte-identically** from its decoded state
 - ✅ user-verified against the AC: 4 captures (`power_on`, `power_off`, `24_auto`, `24_5`) + the generated 25 °C set — sent via Broadlink RM4, **AC obeys**
-- 📦 ready-made outputs: [`codes.json`](codes.json) (Broadlink/HA) and
-  [`smartir.json`](smartir.json) ([SmartIR](https://github.com/smartHomeHub/SmartIR) climate profile)
+- ✅ swing reverse-engineered: vertical = b4 bit0, horizontal = b4 bit4 — confirmed on the AC (old codes with `b4=0x01` made the flap oscillate)
+- 📦 ready-made outputs: [`codes.json`](codes.json) (Broadlink/HA, 366 commands) and
+  [`smartir.json`](smartir.json) ([SmartIR](https://github.com/smartHomeHub/SmartIR) climate profile with swing modes)
 
 Python 3 stdlib only. No dependencies.
 
@@ -80,6 +82,7 @@ Two controlled sweeps against a base capture, changing **one thing at a time**:
 
 - **temperature sweep** (22/23/24 °C, same fan) → only byte 3 moved → temp field
 - **fan sweep** (auto/1–5/turbo, same temp) → only byte 2 moved → fan/power/turbo
+- **swing learns** (v/h on/off at 24 °C fan 5) → only byte 4 moved → swing field
 
 Resulting layout:
 
@@ -88,8 +91,14 @@ Resulting layout:
 | 0–1 | sync | `AA 11` constant |
 | 2 | **fan + power + powerful** | `turbo<<7 \| fan<<4 \| power<<3 \| 1` (fan: auto=0, 1–5) |
 | 3 | **temperature** | `temp − 16` (18–30 °C → 2–14) |
-| 4–7 | mode/flags | `01 44 00 00` constant in all captures (Cool mode) |
+| 4 | **swing** | `vertical (bit0) \| horizontal (bit4)` |
+| 5–7 | mode/flags | `44 00 00` constant in all captures (Cool mode) |
 | 8 | **checksum** | see below |
+
+The swing learns also exposed a trap: **all 22 original captures carried
+`b4=0x01`** — they were learned with vertical swing latched ON. Confirmed on
+the real AC (the first generated codes made the flap oscillate). Generated
+codes therefore default to swing **off**, with explicit swing variants.
 
 ### Step 5 — Crack the checksum (the hard part)
 
@@ -118,7 +127,12 @@ bytes `AA 11 01 44` sum to exactly `0x100 ≡ 0 (mod 256)`, so the general rule 
 ck = ( sum(bytes[0:8]) mod 256 ) ^ 0xAA
 ```
 
-which explains every observed carry quirk. **Valid on all 21 decodable captures (the corrupt 23_auto is excluded throughout).**
+which explains every observed carry quirk. **Valid on all 21 decodable captures (the corrupt 23_auto is excluded throughout) and on the decoded swing frames.**
+
+(Refinement after the swing discovery: `b4` is a field, not a constant — the
+fixed bytes `AA 11 44 00 00` sum to `0xFF`, so in Cool mode the shortcut is
+`(b2+b3+b4−1) ^ 0xAA`, which collapses to `(b2+b3) ^ 0xAA` exactly when
+vertical swing is on — as it was in every original learn.)
 
 ### Step 6 — Validate end to end
 
@@ -126,9 +140,21 @@ which explains every observed carry quirk. **Valid on all 21 decodable captures 
 2. All 21 decodable captures regenerate **byte-identically** from their decoded state.
 3. 4 captures confirmed working on the AC by the user (`power_on`, `power_off`, `24_auto`, `24_5`).
 4. Generated 25 °C codes (auto/1–5/turbo) sent through the actual Broadlink → **AC obeys**.
+5. The 4 decoded swing-learn states (v/h on/off) regenerate byte-identically
+   (`generate.py` re-checks this on every run).
+
+> The raw swing learns are ~340-char base64 strings; relaying them through
+> chat corrupted them (twice), so the **decoded frames** are the recorded
+> evidence (`SWING_EVIDENCE` in `generate.py`) — they carry the same
+> information, checksum-validated.
 
 ## Curious findings
 
+- All original captures were learned with **vertical swing latched on**
+  (`b4=0x01`) — confirmed on the real AC.
+- Pressing a swing button **clears the powerful (turbo) bit** on this remote —
+  the turbo-labelled swing learns decode as plain fan 5.
+- Both swing-off buttons send the **same frame** (whole swing byte cleared).
 - `24_2` had been learned at **fan 4** — the label was wrong, not the capture.
 - The remote **resets to 24 °C on shutdown**: off-frames always carry 24,
   even when powered off at 23 (matches the display behaviour).
@@ -152,10 +178,10 @@ python3 daikin.py     # module self-check
 | [`captures.json`](captures.json) | the raw Broadlink base64 captures (the evidence) |
 | [`broadlink.py`](broadlink.py) | Broadlink learned-code codec (b64 ⇄ µs timings) |
 | [`daikin.py`](daikin.py) | the protocol: fields, checksum, timing, build/decode |
-| [`generate.py`](generate.py) | capture validation + full command matrix |
+| [`generate.py`](generate.py) | capture validation + full command matrix (incl. swing evidence) |
 | [`smartir.py`](smartir.py) | SmartIR profile generator |
-| [`codes.json`](codes.json) | 93 commands: `on`, `off`, `18_auto`…`30_turbo` |
-| [`smartir.json`](smartir.json) | SmartIR climate profile |
+| [`codes.json`](codes.json) | 366 commands: `on`, `off`, `18_auto`…`30_turbo`, each with `_v`/`_h`/`_vh` swing variants |
+| [`smartir.json`](smartir.json) | SmartIR climate profile (with swing modes) |
 
 ### Home Assistant — Broadlink codes
 
@@ -168,8 +194,13 @@ target: {entity_id: remote.broadlink_remote}
 data: {device: adis_bedroom_ac, command: "25_2"}
 ```
 
-Every code is a full state — `25_2` turns the AC **on** at 25 °C fan 2.
+Every code is a full state — `25_2` turns the AC **on** at 25 °C fan 2 with
+swing off; `25_2_v` / `25_2_h` / `25_2_vh` add vertical / horizontal / both.
 `off` is the only standalone you need.
+
+> Note: codes generated before the swing discovery (≤ 93-command versions)
+carry vertical swing ON — that's what the remote had latched during the
+original learns.
 
 ### Home Assistant — SmartIR thermostat card
 
@@ -187,6 +218,11 @@ climate:
     controller_data: remote.broadlink_remote
 ```
 
+The climate entity exposes fan modes (auto/1–5/turbo) and swing modes
+(off/vertical/horizontal/both) — every change resends the full state.
+`both` (`b4=0x11`) and turbo+swing combos are generated (checksum-valid) but
+were never captured; test once on your unit.
+
 ## Timing reference (for library authors)
 
 - 38 kHz carrier, pulse-distance, LSB-first per byte, single frame
@@ -196,9 +232,10 @@ climate:
 
 ## Extending
 
-- **Other modes** (dry/fan/heat) or **swing**: bytes 4–7 carry them. Learn one
-  sample per mode at a known temp/fan, diff against a cool frame, re-derive the
-  checksum with the general `sum ^ 0xAA` rule. Same method, five minutes each.
+- **Other modes** (dry/fan/heat): likely in `b5` (`0x44` = Cool in all
+  captures). Learn one sample per mode at a known temp/fan, diff against a
+  cool frame, re-derive with the general `sum ^ 0xAA` rule. Same method,
+  five minutes each.
 
 ## References
 

@@ -6,15 +6,15 @@ Frame: 9 bytes, each sent LSB-first (bit 0 first), 38 kHz carrier.
   b2 = turbo<<7 | fan<<4 | power<<3 | 1
         fan: auto=0, 1..5 ; power: 1=on ; turbo (powerful): 1
   b3 = temp - 16          (18..30 C -> 2..14)
-  b4 = 0x01, b5 = 0x44    constants (mode-related; all captures were Cool)
-  b6 = 0x00, b7 = 0x00
-  b8 = (sum(b0..b7) mod 256) ^ 0xAA      (constants sum to 0x100 -> (b2+b3)^0xAA)
+  b4 = swing_v | swing_h<<4        (vertical flap / horizontal flap)
+        NOTE: all original Cool-mode captures were learned with swing_v ON
+        (b4=0x01) — confirmed on the real AC.
+  b5 = 0x44, b6 = 0x00, b7 = 0x00  constants (mode-related; Cool)
+  b8 = (sum(b0..b7) mod 256) ^ 0xAA      (Cool shortcut: (b2+b3+b4-1)^0xAA, since AA 11 44 00 00 sum to 0xFF; collapses to (b2+b3)^0xAA when swing_v on)
 
 Timing (us): header 7000/3500; bit mark 450; space 450 (0) / 1300 (1);
-footer mark 450; trailing gap 109440 (Broadlink escape 0x000D05, as learned).
-
-Validated against 21 real captures: every frame decodes with a valid checksum
-and the expected state.
+footer mark 450; trailing gap ~109 ms. Learned codes may carry extra trailing
+pairs (learns vary); the parser decodes the first 148 timings.
 """
 
 from broadlink import decode as bl_decode, encode as bl_encode
@@ -31,10 +31,12 @@ def checksum(frame8: bytes) -> int:
     return (sum(frame8) & 0xFF) ^ 0xAA
 
 
-def build_frame(temp: int, fan: str, power: bool = True, turbo: bool = False) -> bytes:
+def build_frame(temp: int, fan: str, power: bool = True, turbo: bool = False,
+                swing_v: bool = False, swing_h: bool = False) -> bytes:
     assert temp in TEMPS and fan in FANS
     b2 = (0x80 if turbo else 0) | (FANS[fan] << 4) | (0x08 if power else 0) | 0x01
-    body = bytes([0xAA, 0x11, b2, temp - 16, 0x01, 0x44, 0x00, 0x00])
+    b4 = (0x01 if swing_v else 0) | (0x10 if swing_h else 0)
+    body = bytes([0xAA, 0x11, b2, temp - 16, b4, 0x44, 0x00, 0x00])
     return body + bytes([checksum(body)])
 
 
@@ -49,7 +51,7 @@ def frame_to_timings(frame: bytes) -> list[int]:
 
 
 def timings_to_frame(t: list[int]) -> bytes:
-    assert len(t) == 2 + 72 * 2 + 2, f"unexpected timing count {len(t)}"
+    assert len(t) >= 2 + 72 * 2 + 2, f"unexpected timing count {len(t)}"
     assert t[0] > 5000, "bad header mark"
     bits = [1 if t[2 + 2 * i + 1] > 800 else 0 for i in range(72)]
     return bytes(sum(bits[8 * i + k] << k for k in range(8)) for i in range(9))
@@ -71,6 +73,8 @@ def decode_state(frame: bytes) -> dict:
         "fan": rev_fans[(b2 >> 4) & 7],
         "power": bool(b2 & 0x08),
         "turbo": bool(b2 & 0x80),
+        "swing_v": bool(frame[4] & 0x01),
+        "swing_h": bool(frame[4] & 0x10),
         "checksum_ok": frame[8] == checksum(frame[:8]),
     }
 
@@ -78,9 +82,10 @@ def decode_state(frame: bytes) -> dict:
 if __name__ == "__main__":  # self-check: round-trip + checksum
     for temp in (18, 24, 30):
         for fan in FANS:
-            f = build_frame(temp, fan)
-            assert f == from_broadlink(to_broadlink(f)), (temp, fan)
-            assert decode_state(f)["checksum_ok"]
-    off = build_frame(24, "5", power=False, turbo=True)
+            for sv, sh in ((0, 0), (1, 0), (0, 1), (1, 1)):
+                f = build_frame(temp, fan, swing_v=sv, swing_h=sh)
+                assert f == from_broadlink(to_broadlink(f)), (temp, fan, sv, sh)
+                assert decode_state(f)["checksum_ok"]
+    off = build_frame(24, "5", power=False, turbo=True, swing_v=True)
     assert off == from_broadlink(to_broadlink(off)) and decode_state(off)["checksum_ok"]
-    print("daikin.py self-check OK (13 fans/temps round-trip, checksum valid)")
+    print("daikin.py self-check OK (13 states x 4 swing, round-trip + checksum)")
