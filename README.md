@@ -15,8 +15,9 @@ Captures (22 + 16 swing/display) → protocol cracked → 366 commands generated
 - ✅ user-verified against the AC: 4 captures (`power_on`, `power_off`, `24_auto`, `24_5`) + the generated 25 °C set — sent via Broadlink RM4, **AC obeys**
 - ✅ swing reverse-engineered: vertical = b4 bit0, horizontal = b4 bit4 — confirmed on the AC (old codes with `b4=0x01` made the flap oscillate)
 - ✅ display toggle reverse-engineered: **b5 bit7 = display off**; the ambient/set-temp cycling isn't encoded (unit-side)
-- 📦 ready-made outputs: [`codes.json`](codes.json) (Broadlink/HA, 366 commands) and
-  [`smartir.json`](smartir.json) ([SmartIR](https://github.com/smartHomeHub/SmartIR) climate profile with swing modes)
+- 📦 ready-made outputs: [`codes.json`](codes.json) (Broadlink/HA, 366 commands),
+  [`smartir.json`](smartir.json) ([SmartIR](https://github.com/smartHomeHub/SmartIR) climate profile with swing modes), and
+  [`smartir_tuya.json`](smartir_tuya.json) (Tuya/MQTT raw commands)
 
 Python 3 stdlib only. No dependencies.
 
@@ -179,6 +180,7 @@ git clone https://github.com/adityasanehi/daikin-rb2ca1-ir-reverse.git
 cd daikin-rb2ca1-ir-reverse
 python3 generate.py   # validates protocol vs captures.json, writes codes.json
 python3 smartir.py    # writes smartir.json (SmartIR profile)
+python3 tuya.py       # writes smartir_tuya.json; leaves Broadlink data intact
 python3 daikin.py     # module self-check
 ```
 
@@ -189,8 +191,10 @@ python3 daikin.py     # module self-check
 | [`daikin.py`](daikin.py) | the protocol: fields, checksum, timing, build/decode |
 | [`generate.py`](generate.py) | capture validation + full command matrix (incl. swing evidence) |
 | [`smartir.py`](smartir.py) | SmartIR profile generator |
+| [`tuya.py`](tuya.py) | Tuya/MQTT SmartIR profile generator |
 | [`codes.json`](codes.json) | 366 commands: `on`, `off`, `18_auto`…`30_turbo`, each with `_v`/`_h`/`_vh` swing variants |
 | [`smartir.json`](smartir.json) | SmartIR climate profile (with swing modes) |
+| [`smartir_tuya.json`](smartir_tuya.json) | Same SmartIR profile encoded for Tuya/MQTT (`Raw`) |
 
 ### Home Assistant — Broadlink codes
 
@@ -255,6 +259,7 @@ were never captured; test once on your unit.
 - [blafois/Daikin-IR-Reverse](https://github.com/blafois/Daikin-IR-Reverse) — methodology inspiration (ARC470A1)
 - [python-broadlink](https://github.com/mjg59/python-broadlink) — learned-code format reference
 - [SmartIR](https://github.com/smartHomeHub/SmartIR) — climate profile format
+- [Broadlink-to-Tuya converter](https://gist.github.com/svyatogor/7839d00303998a9fa37eb48494dd680f) — Tuya raw stream format reference
 
 ## License
 
